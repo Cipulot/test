@@ -107,6 +107,9 @@ void app_main(void) {
         ESP_LOGE(TAG, "Display initialization failed");
         return;
     }
+    /* TabVIA is designed for the Tab5 in 1280x720 landscape orientation.
+     * The BSP rotation helper also keeps LVGL touch coordinates aligned. */
+    bsp_display_rotate(display, LV_DISPLAY_ROTATION_90);
     bsp_display_backlight_on();
     ESP_LOGI(TAG, "Panel: %s", bsp_display_get_panel_ic());
 

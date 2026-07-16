@@ -18,6 +18,7 @@ jobs:
       - name: Build ESP32-P4 firmware
         shell: bash
         run: |
+          source /opt/esp/idf/export.sh
           idf.py set-target esp32p4
           idf.py build
 
@@ -32,6 +33,7 @@ jobs:
       - name: Merge bootloader, partition table and application
         shell: bash
         run: |
+          source /opt/esp/idf/export.sh
           cd build
           esptool.py --chip esp32p4 merge_bin -o TabVIA-ST7123-full-flash.bin @flash_args
           sha256sum TabVIA-ST7123-full-flash.bin > TabVIA-ST7123-full-flash.bin.sha256
@@ -53,4 +55,3 @@ jobs:
           name: TabVIA-ST7123-full-flash
           path: firmware/
           if-no-files-found: error
-

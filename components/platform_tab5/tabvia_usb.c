@@ -2,17 +2,21 @@
 #include "hid_usage.h"
 #include "esp_log.h"
 #include "usb/hid_host.h"
+#include <stdlib.h>
 #include <string.h>
 static const char *TAG = "tabvia_usb";
 typedef struct {
     hid_host_device_handle_t handle; hid_usage_profile_t profile;
-    uint16_t vid, pid; bool opened;
+    uint16_t vid, pid; bool opened, started;
 } slot_t;
-static struct { tabvia_usb_config_t config; slot_t via, console; bool installed; } s;
+static struct { tabvia_usb_config_t config; slot_t *via, *console; bool installed; } s;
 static void close_slot(slot_t *slot) {
-    if (!slot->opened) return;
-    hid_host_device_stop(slot->handle); hid_host_device_close(slot->handle);
-    *slot = (slot_t){0};
+    if (!slot) return;
+    if (slot->started) hid_host_device_stop(slot->handle);
+    if (slot->opened) hid_host_device_close(slot->handle);
+    if (s.via == slot) s.via = NULL;
+    if (s.console == slot) s.console = NULL;
+    free(slot);
 }
 static void interface_event(hid_host_device_handle_t handle,
                             const hid_host_interface_event_t event, void *arg) {
@@ -40,26 +44,49 @@ static void interface_event(hid_host_device_handle_t handle,
 static void connected(hid_host_device_handle_t handle,
                       const hid_host_driver_event_t event, void *arg) {
     (void)arg; if (event != HID_HOST_DRIVER_EVENT_CONNECTED) return;
+    hid_host_dev_info_t info = {0};
+    if (hid_host_get_device_info(handle, &info) != ESP_OK) return;
+
+    /* The report descriptor is a class request in usb_host_hid 1.2.  The
+     * interface must be opened before that request can be issued. */
+    slot_t *slot = calloc(1, sizeof(*slot));
+    if (!slot) return;
+    slot->handle = handle; slot->vid = info.VID; slot->pid = info.PID;
+    hid_host_device_config_t cfg = {.callback = interface_event, .callback_arg = slot};
+    if (hid_host_device_open(handle, &cfg) != ESP_OK) {
+        ESP_LOGE(TAG, "Unable to open HID interface");
+        free(slot);
+        return;
+    }
+    slot->opened = true;
+
     size_t descriptor_length = 0;
     uint8_t *descriptor = hid_host_get_report_descriptor(handle, &descriptor_length);
     hid_usage_profile_t profiles[2];
-    size_t count = hid_usage_scan_report_descriptor(descriptor, descriptor_length, profiles, 2);
-    if (!count) return;
-    hid_host_dev_info_t info = {0};
-    if (hid_host_get_device_info(handle, &info) != ESP_OK) return;
-    for (size_t i = 0; i < count && i < 2; i++) {
-        slot_t *slot = profiles[i].kind == HID_USAGE_VIA ? &s.via : &s.console;
-        if (slot->opened) continue;
-        *slot = (slot_t){.handle = handle, .profile = profiles[i], .vid = info.VID, .pid = info.PID};
-        hid_host_device_config_t cfg = {.callback = interface_event, .callback_arg = slot};
-        if (hid_host_device_open(handle, &cfg) == ESP_OK && hid_host_device_start(handle) == ESP_OK) {
-            slot->opened = true;
-            if (slot == &s.via && s.config.state_changed)
-                s.config.state_changed(s.config.context, true, info.VID, info.PID);
-        } else { ESP_LOGE(TAG, "Unable to open HID interface"); *slot = (slot_t){0}; }
-        /* One handle represents one HID interface in usb_host_hid. */
-        break;
+    size_t count = descriptor ? hid_usage_scan_report_descriptor(
+                                    descriptor, descriptor_length, profiles, 2) : 0;
+    if (!count) {
+        close_slot(slot);  /* Ordinary keyboard/mouse interface: ignore it. */
+        return;
     }
+
+    slot->profile = profiles[0];
+    slot_t **destination = slot->profile.kind == HID_USAGE_VIA ? &s.via : &s.console;
+    if (*destination) {
+        ESP_LOGW(TAG, "Ignoring duplicate %s HID interface",
+                 slot->profile.kind == HID_USAGE_VIA ? "VIA" : "console");
+        close_slot(slot);
+        return;
+    }
+    *destination = slot;
+    if (hid_host_device_start(handle) != ESP_OK) {
+        ESP_LOGE(TAG, "Unable to start HID interface");
+        close_slot(slot);
+        return;
+    }
+    slot->started = true;
+    if (slot->profile.kind == HID_USAGE_VIA && s.config.state_changed)
+        s.config.state_changed(s.config.context, true, info.VID, info.PID);
 }
 int tabvia_usb_install(const tabvia_usb_config_t *config) {
     if (!config || s.installed) return -1;
@@ -73,15 +100,15 @@ int tabvia_usb_install(const tabvia_usb_config_t *config) {
 }
 int tabvia_usb_uninstall(void) {
     if (!s.installed) return 0;
-    close_slot(&s.via);
-    close_slot(&s.console);
+    close_slot(s.via);
+    close_slot(s.console);
     if (hid_host_uninstall() != ESP_OK) return -1;
     memset(&s, 0, sizeof(s));
     return 0;
 }
 bool tabvia_usb_send_via(void *context, uint8_t report_id,
                          const uint8_t *data, size_t length) {
-    (void)context; if (!s.via.opened || !data || length != VIA_REPORT_SIZE) return false;
-    return hid_class_request_set_report(s.via.handle, HID_REPORT_TYPE_OUTPUT,
+    (void)context; if (!s.via || !s.via->started || !data || length != VIA_REPORT_SIZE) return false;
+    return hid_class_request_set_report(s.via->handle, HID_REPORT_TYPE_OUTPUT,
         report_id, (uint8_t *)data, length) == ESP_OK;
 }
