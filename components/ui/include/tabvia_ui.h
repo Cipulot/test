@@ -11,6 +11,9 @@ typedef struct {
     void (*definition_selected)(void *context, const char *path, definition_version_t version);
     void (*console_clear)(void *context);
     void (*console_save)(void *context);
+    void (*key_selected)(void *context, uint8_t layer, uint8_t row, uint8_t column);
+    void (*keycode_apply)(void *context, uint8_t layer, uint8_t row,
+                          uint8_t column, uint16_t keycode);
     void *context;
 } tabvia_ui_callbacks_t;
 tabvia_ui_t *tabvia_ui_create(lv_obj_t *parent, const tabvia_ui_callbacks_t *callbacks);
@@ -19,3 +22,6 @@ void tabvia_ui_set_definition_files(tabvia_ui_t *ui, const definition_file_t *fi
 void tabvia_ui_set_definition_result(tabvia_ui_t *ui, const definition_summary_t *summary,
                                      const definition_error_t *errors, size_t error_count);
 void tabvia_ui_set_console_text(tabvia_ui_t *ui, const char *text, size_t dropped);
+void tabvia_ui_set_keymap(tabvia_ui_t *ui, uint8_t layers, uint8_t rows,
+                          uint8_t columns, const uint16_t *keycodes);
+void tabvia_ui_set_configure_message(tabvia_ui_t *ui, const char *message);
