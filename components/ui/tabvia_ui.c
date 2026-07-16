@@ -165,6 +165,8 @@ void tabvia_ui_set_keymap(tabvia_ui_t *ui, uint8_t layers, uint8_t rows,
     if (ui->active_tab == TABVIA_TAB_CONFIGURE) show_panel(ui, TABVIA_TAB_CONFIGURE);
 }
 void tabvia_ui_set_configure_message(tabvia_ui_t *ui, const char *message) {
-    if (!ui) return; snprintf(ui->configure_message, sizeof(ui->configure_message), "%s", message ? message : "");
+    if (!ui) return;
+    snprintf(ui->configure_message, sizeof(ui->configure_message), "%s",
+             message ? message : "");
     if (ui->active_tab == TABVIA_TAB_CONFIGURE) show_panel(ui, TABVIA_TAB_CONFIGURE);
 }
