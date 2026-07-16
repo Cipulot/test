@@ -12,7 +12,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     container: espressif/idf:release-v5.4
-
     steps:
       - uses: actions/checkout@v4
 
@@ -36,11 +35,8 @@ jobs:
         run: |
           source /opt/esp/idf/export.sh
           cd build
-          esptool.py --chip esp32p4 merge_bin \
-            -o TabVIA-ST7123-full-flash.bin \
-            @flash_args
-          sha256sum TabVIA-ST7123-full-flash.bin \
-            > TabVIA-ST7123-full-flash.bin.sha256
+          esptool.py --chip esp32p4 merge_bin -o TabVIA-ST7123-full-flash.bin @flash_args
+          sha256sum TabVIA-ST7123-full-flash.bin > TabVIA-ST7123-full-flash.bin.sha256
 
       - name: Package firmware
         shell: bash
@@ -54,8 +50,7 @@ jobs:
           cp build/flash_args firmware/
           cp sdkconfig firmware/
 
-      - name: Upload firmware artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: TabVIA-ST7123-full-flash
           path: firmware/
