@@ -5,20 +5,79 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 #include "usb/hid_host.h"
+#include "usb/usb_host.h"
+#include <sys/queue.h>
 #include <stdlib.h>
 #include <string.h>
 static const char *TAG = "tabvia_usb";
 typedef struct {
     hid_host_device_handle_t handle; hid_usage_profile_t profile;
     uint16_t vid, pid; bool opened, started, disconnected;
+    uint8_t out_endpoint; uint16_t out_mps; usb_transfer_t *out_transfer;
+    volatile bool out_busy;
 } slot_t;
+
+/* usb_host_hid 1.2 does not expose its interrupt OUT endpoint or an output
+ * submission API. These two prefix mirrors are pinned to that component's
+ * public 1.2 layout and are used only to reach the USB device handle. */
+typedef struct tabvia_hid_device_prefix {
+    STAILQ_ENTRY(tabvia_hid_device_prefix) tailq_entry;
+    SemaphoreHandle_t device_busy;
+    SemaphoreHandle_t ctrl_xfer_done;
+    usb_transfer_t *ctrl_xfer;
+    usb_device_handle_t dev_hdl;
+} tabvia_hid_device_prefix_t;
+typedef struct tabvia_hid_interface_prefix {
+    STAILQ_ENTRY(tabvia_hid_interface_prefix) tailq_entry;
+    tabvia_hid_device_prefix_t *parent;
+    hid_host_dev_params_t dev_params;
+} tabvia_hid_interface_prefix_t;
 static struct {
     tabvia_usb_config_t config; slot_t *via, *console; bool installed;
     QueueHandle_t discovery_queue; TaskHandle_t discovery_task;
 } s;
+static void out_transfer_done(usb_transfer_t *transfer) {
+    slot_t *slot = transfer ? transfer->context : NULL;
+    if (!slot) return;
+    slot->out_busy = false;
+    if (transfer->status != USB_TRANSFER_STATUS_COMPLETED)
+        ESP_LOGW(TAG, "VIA interrupt OUT failed, status %d", transfer->status);
+}
+static bool prepare_out_endpoint(slot_t *slot) {
+    tabvia_hid_interface_prefix_t *iface = (tabvia_hid_interface_prefix_t *)slot->handle;
+    if (!iface || !iface->parent) return false;
+    const usb_config_desc_t *config = NULL;
+    if (usb_host_get_active_config_descriptor(iface->parent->dev_hdl, &config) != ESP_OK || !config) return false;
+    const uint8_t *raw = (const uint8_t *)config; size_t offset = 0; bool matching = false;
+    while (offset + 2 <= config->wTotalLength && raw[offset]) {
+        uint8_t length = raw[offset], type = raw[offset + 1];
+        if (offset + length > config->wTotalLength) break;
+        if (type == USB_B_DESCRIPTOR_TYPE_INTERFACE && length >= 9)
+            matching = raw[offset + 2] == iface->dev_params.iface_num;
+        else if (matching && type == USB_B_DESCRIPTOR_TYPE_ENDPOINT && length >= 7) {
+            uint8_t address = raw[offset + 2], attributes = raw[offset + 3] & 0x03;
+            if (!(address & 0x80u) && attributes == 0x03u) {
+                slot->out_endpoint = address;
+                slot->out_mps = (uint16_t)(raw[offset + 4] | ((uint16_t)raw[offset + 5] << 8));
+                if (usb_host_transfer_alloc(slot->out_mps, 0, &slot->out_transfer) != ESP_OK) return false;
+                slot->out_transfer->device_handle = iface->parent->dev_hdl;
+                slot->out_transfer->bEndpointAddress = address;
+                slot->out_transfer->callback = out_transfer_done;
+                slot->out_transfer->context = slot;
+                slot->out_transfer->timeout_ms = 1000;
+                ESP_LOGI(TAG, "VIA interrupt OUT endpoint 0x%02X, MPS %u", address, slot->out_mps);
+                return true;
+            }
+        }
+        offset += length;
+    }
+    ESP_LOGW(TAG, "HID interface has no interrupt OUT endpoint; using SET_REPORT");
+    return false;
+}
 static void close_slot(slot_t *slot) {
     if (!slot) return;
     if (slot->started) hid_host_device_stop(slot->handle);
+    if (slot->out_transfer && !slot->out_busy) usb_host_transfer_free(slot->out_transfer);
     if (slot->opened) hid_host_device_close(slot->handle);
     if (s.via == slot) s.via = NULL;
     if (s.console == slot) s.console = NULL;
@@ -85,6 +144,7 @@ static void discover_interface(void *arg) {
             continue;
         }
         *destination = slot;
+        if (slot->profile.kind == HID_USAGE_VIA) prepare_out_endpoint(slot);
         if (hid_host_device_start(slot->handle) != ESP_OK) {
             ESP_LOGE(TAG, "Unable to start HID interface");
             close_slot(slot);
@@ -156,6 +216,17 @@ int tabvia_usb_uninstall(void) {
 bool tabvia_usb_send_via(void *context, uint8_t report_id,
                          const uint8_t *data, size_t length) {
     (void)context; if (!s.via || !s.via->started || !data || length != VIA_REPORT_SIZE) return false;
+    if (s.via->out_transfer) {
+        if (s.via->out_busy) return false;
+        size_t packet_length = length + (report_id ? 1u : 0u);
+        if (packet_length > s.via->out_mps) return false;
+        if (report_id) { s.via->out_transfer->data_buffer[0] = report_id;
+            memcpy(&s.via->out_transfer->data_buffer[1], data, length); }
+        else memcpy(s.via->out_transfer->data_buffer, data, length);
+        s.via->out_transfer->num_bytes = packet_length; s.via->out_busy = true;
+        if (usb_host_transfer_submit(s.via->out_transfer) == ESP_OK) return true;
+        s.via->out_busy = false; return false;
+    }
     return hid_class_request_set_report(s.via->handle, HID_REPORT_TYPE_OUTPUT,
         report_id, (uint8_t *)data, length) == ESP_OK;
 }
