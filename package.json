@@ -1,0 +1,11 @@
+{
+  "name": "tabvia-parity-tools",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "validate:reader": "node tools/validate-with-reader.mjs"
+  },
+  "dependencies": {
+    "@the-via/reader": "1.14.1"
+  }
+}
