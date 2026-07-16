@@ -59,6 +59,43 @@ static void validate_layouts(const cJSON *root, definition_shape_t shape,
         return;
     }
     out->layout_key_count = (size_t)cJSON_GetArraySize(keys);
+    float y = 0.0f; uint32_t color = 0xcccccc;
+    size_t layout_index = 0;
+    cJSON *kle_row = NULL;
+    cJSON_ArrayForEach(kle_row, keys) {
+        if (!cJSON_IsArray(kle_row)) continue;
+        float x = 0.0f, width = 1.0f, height = 1.0f;
+        cJSON *item = NULL;
+        cJSON_ArrayForEach(item, kle_row) {
+            if (cJSON_IsObject(item)) {
+                cJSON *value = cJSON_GetObjectItemCaseSensitive(item, "x");
+                if (cJSON_IsNumber(value)) x += (float)value->valuedouble;
+                value = cJSON_GetObjectItemCaseSensitive(item, "y");
+                if (cJSON_IsNumber(value)) y += (float)value->valuedouble;
+                value = cJSON_GetObjectItemCaseSensitive(item, "w");
+                if (cJSON_IsNumber(value)) width = (float)value->valuedouble;
+                value = cJSON_GetObjectItemCaseSensitive(item, "h");
+                if (cJSON_IsNumber(value)) height = (float)value->valuedouble;
+                value = cJSON_GetObjectItemCaseSensitive(item, "c");
+                if (cJSON_IsString(value) && value->valuestring && value->valuestring[0] == '#')
+                    color = (uint32_t)strtoul(value->valuestring + 1, NULL, 16);
+            } else if (cJSON_IsString(item) && item->valuestring) {
+                unsigned row = 0, column = 0;
+                if (sscanf(item->valuestring, "%u,%u", &row, &column) != 2 || row > 255 || column > 255) {
+                    error_add(e, path, "key must contain a row,column matrix position");
+                    continue;
+                }
+                if (layout_index < DEFINITION_MAX_LAYOUT_KEYS) {
+                    definition_layout_key_t *key = &out->layout_keys[layout_index++];
+                    *key = (definition_layout_key_t){x, y, width, height,
+                                                     (uint8_t)row, (uint8_t)column, color};
+                }
+                x += width; width = height = 1.0f;
+            }
+        }
+        y += 1.0f;
+    }
+    out->layout_key_count = layout_index;
 }
 bool definition_reader_validate(const char *json, definition_version_t version,
     definition_summary_t *out, definition_error_t *items, size_t capacity,

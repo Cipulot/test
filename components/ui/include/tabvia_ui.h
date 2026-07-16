@@ -22,6 +22,6 @@ void tabvia_ui_set_definition_files(tabvia_ui_t *ui, const definition_file_t *fi
 void tabvia_ui_set_definition_result(tabvia_ui_t *ui, const definition_summary_t *summary,
                                      const definition_error_t *errors, size_t error_count);
 void tabvia_ui_set_console_text(tabvia_ui_t *ui, const char *text, size_t dropped);
-void tabvia_ui_set_keymap(tabvia_ui_t *ui, uint8_t layers, uint8_t rows,
-                          uint8_t columns, const uint16_t *keycodes);
+void tabvia_ui_set_keymap(tabvia_ui_t *ui, const definition_summary_t *definition,
+                          uint8_t layers, const uint16_t *keycodes);
 void tabvia_ui_set_configure_message(tabvia_ui_t *ui, const char *message);

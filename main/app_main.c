@@ -65,8 +65,7 @@ static void ui_message(const char *message) {
 static void publish_keymap(void) {
     if (!s_keycodes) return;
     if (bsp_display_lock(1000)) {
-        tabvia_ui_set_keymap(s_ui, s_layers, (uint8_t)s_definition.matrix_rows,
-                             (uint8_t)s_definition.matrix_columns, s_keycodes);
+        tabvia_ui_set_keymap(s_ui, &s_definition, s_layers, s_keycodes);
         bsp_display_unlock();
     }
 }
@@ -146,10 +145,13 @@ static void console_changed(void *context) {
 static void definition_selected(void *context, const char *path,
                                 definition_version_t version) {
     (void)context;
-    definition_summary_t summary;
-    definition_error_t errors[12];
+    definition_summary_t *summary = heap_caps_calloc(1, sizeof(*summary),
+                                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    definition_error_t *errors = heap_caps_calloc(12, sizeof(*errors),
+                                                   MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!summary || !errors) { free(summary); free(errors); ui_message("Not enough memory to read definition"); return; }
     size_t count = 0;
-    bool valid = definition_reader_validate_file(path, version, &summary,
+    bool valid = definition_reader_validate_file(path, version, summary,
                                                   errors, 12, &count);
     if (!valid && count == 0) {
         snprintf(errors[0].instance_path, sizeof(errors[0].instance_path), "Object");
@@ -157,16 +159,17 @@ static void definition_selected(void *context, const char *path,
         count = 1;
     }
     if (bsp_display_lock(1000)) {
-        tabvia_ui_set_definition_result(s_ui, valid ? &summary : NULL, errors, count);
+        tabvia_ui_set_definition_result(s_ui, valid ? summary : NULL, errors, count);
         bsp_display_unlock();
     }
     if (valid) {
-        s_definition = summary; s_definition_valid = true;
-        if (s_keyboard_connected && (summary.vendor_id != s_connected_vid || summary.product_id != s_connected_pid))
+        s_definition = *summary; s_definition_valid = true;
+        if (s_keyboard_connected && (summary->vendor_id != s_connected_vid || summary->product_id != s_connected_pid))
             ui_message("Definition VID/PID does not match the connected keyboard");
         else if (s_keyboard_connected) s_sync_requested = true;
         else ui_message("Definition selected; connect its VIA keyboard");
     }
+    free(summary); free(errors);
 }
 
 static void key_selected(void *context, uint8_t layer, uint8_t row, uint8_t column) {
