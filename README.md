@@ -1,5 +1,10 @@
 # TabVIA
 
+> **Full-flash ST7123 build:** This branch uses the normal 70 MHz ST7123 DPI
+> timing and requires its included bootloader to initialize HEX PSRAM at
+> 200 MHz. It is not compatible with installation as an application-only image
+> under Launcher 2.7.2, whose retained bootloader initializes PSRAM at 20 MHz.
+
 TabVIA is a native, touch-first VIA configurator for the M5Stack Tab5. It talks
 to QMK/VIA keyboards through the Tab5 USB-A host port; it does not embed a web
 browser or require WebHID.

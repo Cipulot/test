@@ -1,0 +1,56 @@
+name: Build TabVIA firmware
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:release-v5.4
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ESP32-P4 firmware
+        shell: bash
+        run: |
+          idf.py set-target esp32p4
+          idf.py build
+
+      - name: Verify full-flash hardware configuration
+        shell: bash
+        run: |
+          grep -q '^CONFIG_SPIRAM_SPEED_200M=y$' sdkconfig
+          grep -q '^CONFIG_CACHE_L2_CACHE_256KB=y$' sdkconfig
+          grep -q '^CONFIG_CACHE_L2_CACHE_LINE_128B=y$' sdkconfig
+          grep -q 'dpi_clock_freq_mhz = 70' components/m5stack_tab5/m5stack_tab5.c
+
+      - name: Merge bootloader, partition table and application
+        shell: bash
+        run: |
+          cd build
+          esptool.py --chip esp32p4 merge_bin -o TabVIA-ST7123-full-flash.bin @flash_args
+          sha256sum TabVIA-ST7123-full-flash.bin > TabVIA-ST7123-full-flash.bin.sha256
+
+      - name: Package firmware
+        shell: bash
+        run: |
+          mkdir -p firmware
+          cp build/TabVIA-ST7123-full-flash.bin firmware/
+          cp build/TabVIA-ST7123-full-flash.bin.sha256 firmware/
+          cp build/tabvia.bin firmware/TabVIA-ST7123-app.bin
+          cp build/bootloader/bootloader.bin firmware/
+          cp build/partition_table/partition-table.bin firmware/
+          cp build/flash_args firmware/
+          cp sdkconfig firmware/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TabVIA-ST7123-full-flash
+          path: firmware/
+          if-no-files-found: error
+
