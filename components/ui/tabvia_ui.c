@@ -4,7 +4,7 @@
 #include <string.h>
 struct tabvia_ui {
     tabvia_ui_callbacks_t cb; lv_obj_t *root, *content, *status, *design_list;
-    lv_obj_t *version, *errors, *console, *layer, *grid, *selection, *keycode_input;
+    lv_obj_t *version, *errors, *console, *layer, *grid, *selection, *keycode_input, *configure_status;
     definition_file_t files[64]; size_t file_count; tabvia_tab_t active_tab;
     uint16_t *keycodes; uint8_t layers, rows, columns, selected_layer, selected_row, selected_column;
     char configure_message[160];
@@ -39,9 +39,11 @@ static void definition_event(lv_event_t *e) {
 }
 static void key_event(lv_event_t *e) {
     tabvia_ui_t *ui = lv_event_get_user_data(e);
-    uintptr_t packed = (uintptr_t)lv_obj_get_user_data(lv_event_get_target(e));
-    ui->selected_layer = (uint8_t)(packed >> 16);
-    ui->selected_row = (uint8_t)(packed >> 8); ui->selected_column = (uint8_t)packed;
+    uint32_t row = 0, column = 0;
+    lv_table_get_selected_cell(lv_event_get_target(e), &row, &column);
+    if (row >= ui->rows || column >= ui->columns) return;
+    ui->selected_layer = (uint8_t)lv_dropdown_get_selected(ui->layer);
+    ui->selected_row = (uint8_t)row; ui->selected_column = (uint8_t)column;
     size_t index = ((size_t)ui->selected_layer * ui->rows + ui->selected_row) * ui->columns + ui->selected_column;
     char text[80], code[12];
     snprintf(text, sizeof(text), "Layer %u · row %u · column %u · 0x%04X",
@@ -60,14 +62,13 @@ static void apply_keycode_event(lv_event_t *e) {
 }
 static void render_key_grid(tabvia_ui_t *ui) {
     if (!ui->grid || !ui->keycodes || !ui->layers) return;
-    lv_obj_clean(ui->grid); ui->selected_layer = (uint8_t)lv_dropdown_get_selected(ui->layer);
+    ui->selected_layer = (uint8_t)lv_dropdown_get_selected(ui->layer);
+    lv_table_set_row_count(ui->grid, ui->rows);
+    lv_table_set_column_count(ui->grid, ui->columns);
+    for (uint8_t c = 0; c < ui->columns; c++) lv_table_set_column_width(ui->grid, c, 72);
     for (uint8_t r = 0; r < ui->rows; r++) for (uint8_t c = 0; c < ui->columns; c++) {
         size_t index = ((size_t)ui->selected_layer * ui->rows + r) * ui->columns + c;
-        lv_obj_t *b = lv_button_create(ui->grid); style_button(b); lv_obj_set_size(b, 72, 48);
-        lv_obj_set_user_data(b, (void *)(uintptr_t)(((uint32_t)ui->selected_layer << 16) | ((uint32_t)r << 8) | c));
-        lv_obj_add_event_cb(b, key_event, LV_EVENT_CLICKED, ui);
-        char text[12]; snprintf(text, sizeof(text), "%04X", ui->keycodes[index]);
-        lv_obj_t *label = lv_label_create(b); lv_label_set_text(label, text); lv_obj_center(label);
+        lv_table_set_cell_value_fmt(ui->grid, r, c, "%04X", ui->keycodes[index]);
     }
 }
 static void layer_event(lv_event_t *e) { render_key_grid(lv_event_get_user_data(e)); }
@@ -76,7 +77,7 @@ static void show_panel(tabvia_ui_t *ui, tabvia_tab_t tab) {
     if (tab == TABVIA_TAB_CONFIGURE) {
         lv_obj_t *bar = lv_obj_create(ui->content); lv_obj_set_size(bar, LV_PCT(100), 70);
         lv_obj_set_flex_flow(bar, LV_FLEX_FLOW_ROW);
-        lv_obj_t *hint = lv_label_create(bar); lv_label_set_text(hint, ui->configure_message[0] ? ui->configure_message : "Select a valid definition, then connect a VIA keyboard");
+        ui->configure_status = lv_label_create(bar); lv_label_set_text(ui->configure_status, ui->configure_message[0] ? ui->configure_message : "Select a valid definition, then connect a VIA keyboard");
         ui->layer = lv_dropdown_create(bar); char options[64] = {0}; size_t used = 0;
         for (uint8_t i = 0; i < ui->layers && used < sizeof(options); i++)
             used += snprintf(options + used, sizeof(options) - used, "%sLayer %u", i ? "\n" : "", i);
@@ -86,8 +87,9 @@ static void show_panel(tabvia_ui_t *ui, tabvia_tab_t tab) {
         lv_obj_t *edit = lv_obj_create(ui->content); lv_obj_set_size(edit, LV_PCT(100), 64); lv_obj_set_flex_flow(edit, LV_FLEX_FLOW_ROW);
         ui->keycode_input = lv_textarea_create(edit); lv_textarea_set_one_line(ui->keycode_input, true); lv_obj_set_width(ui->keycode_input, 180); lv_textarea_set_text(ui->keycode_input, "0x0000");
         lv_obj_t *apply = lv_button_create(edit); style_button(apply); lv_label_set_text(lv_label_create(apply), "Apply keycode"); lv_obj_add_event_cb(apply, apply_keycode_event, LV_EVENT_CLICKED, ui);
-        ui->grid = lv_obj_create(ui->content); lv_obj_set_size(ui->grid, LV_PCT(100), 390);
-        lv_obj_set_flex_flow(ui->grid, LV_FLEX_FLOW_ROW_WRAP); lv_obj_set_scroll_dir(ui->grid, LV_DIR_ALL);
+        ui->grid = lv_table_create(ui->content); lv_obj_set_size(ui->grid, LV_PCT(100), 390);
+        lv_obj_set_scroll_dir(ui->grid, LV_DIR_ALL);
+        lv_obj_add_event_cb(ui->grid, key_event, LV_EVENT_VALUE_CHANGED, ui);
         render_key_grid(ui);
     } else if (tab == TABVIA_TAB_DESIGN) {
         lv_obj_t *toolbar = lv_obj_create(ui->content); lv_obj_set_size(toolbar, LV_PCT(100), 64);
@@ -168,5 +170,6 @@ void tabvia_ui_set_configure_message(tabvia_ui_t *ui, const char *message) {
     if (!ui) return;
     snprintf(ui->configure_message, sizeof(ui->configure_message), "%s",
              message ? message : "");
-    if (ui->active_tab == TABVIA_TAB_CONFIGURE) show_panel(ui, TABVIA_TAB_CONFIGURE);
+    if (ui->active_tab == TABVIA_TAB_CONFIGURE && ui->configure_status)
+        lv_label_set_text(ui->configure_status, ui->configure_message);
 }
